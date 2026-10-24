@@ -1,0 +1,97 @@
+# Prepared for a later approved cutover. Do not start while the legacy
+# PostgreSQL/backend containers are running. See docs/local-runtime.md.
+name: arsipsemantik
+
+services:
+  db:
+    image: pgvector/pgvector:pg18-trixie@sha256:dc8631aeee036a59d054c28d29ddb15536caa0c89a96f548fa944774a50af973
+    pull_policy: never
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in the private root .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the private root .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in the private root .env}
+      PGDATA: /var/lib/postgresql/18/docker
+    # Refuse an empty/wrong volume before the image can invoke initdb.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        if [ ! -s "$${PGDATA}/PG_VERSION" ] ||
+           [ "$$(cat "$${PGDATA}/PG_VERSION")" != "18" ] ||
+           [ ! -f "$${PGDATA}/global/pg_control" ] ||
+           [ ! -d "$${PGDATA}/base" ]; then
+          printf '%s\n' 'Refusing startup: the existing PostgreSQL 18 cluster was not found.' >&2
+          exit 1
+        fi
+        exec docker-entrypoint.sh postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - type: volume
+        source: pgdata
+        target: /var/lib/postgresql
+        volume:
+          nocopy: true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - default
+
+  backend:
+    image: arsipsemantik-backend:evaluation-sklearn1.9.0
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.evaluation
+    pull_policy: never
+    restart: unless-stopped
+    working_dir: /app/backend
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file:
+      - path: ./backend/.env
+        format: raw
+    environment:
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:?Set COMPOSE_DATABASE_URL in the private root .env}
+      HF_HOME: /root/.cache/huggingface
+      HF_HUB_OFFLINE: "1"
+    ports:
+      - "8000:8000"
+    volumes:
+      - type: bind
+        source: .
+        target: /app
+        bind:
+          create_host_path: false
+      - type: volume
+        source: hf_cache
+        target: /root/.cache/huggingface
+        volume:
+          nocopy: true
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/db', timeout=4).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge
+
+volumes:
+  pgdata:
+    external: true
+    name: arsipsemantik_pgvector_data
+  hf_cache:
+    external: true
+    name: arsipsemantik_hf_cache

@@ -1,0 +1,32 @@
+# Runtime document storage
+backend/storage/
+
+# Local caches
+.cache/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.vite/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Local build/dependency output
+node_modules/
+dist/
+build/
+.venv/
+venv/
+
+# Internal backups
+/backups/
+
+# Logs/temp
+*.log
+*.tmp
+*.temp
+Thumbs.db
+.DS_Store
+desktop.ini

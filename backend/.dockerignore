@@ -1,0 +1,5 @@
+# The runtime bind-mounts source. Only dependency/build files enter this context.
+**
+!requirements.txt
+!Dockerfile.evaluation
+!.dockerignore
