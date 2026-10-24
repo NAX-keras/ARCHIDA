@@ -1,8 +1,7 @@
 from datetime import timezone, timedelta
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
@@ -13,6 +12,9 @@ from app.schemas.document_access import UpdateDocumentAccessRequest
 from app.models.user import User
 from app.services.document_download_service import (
     UnsupportedDocument, inspect_download_format, safe_download_name,
+)
+from app.services.document_storage_service import (
+    DOWNLOAD_HEADERS, DocumentFileResponse, StorageUnavailable, read_document,
 )
 from app.services.auth.dependencies import (
     get_current_user, require_admin, filter_visible_documents,
@@ -35,51 +37,6 @@ CATEGORY_MAPPING = {
 ALLOWED_ACCESS_LEVELS = {"PUBLIC", "PRIVATE"}
 
 WIB_TIMEZONE = timezone(timedelta(hours=7))
-
-
-def get_backend_directory() -> Path:
-    """
-    Mengambil lokasi folder backend.
-
-    Posisi file:
-    backend/app/api/routes/documents.py
-
-    parents[3] = backend/
-    """
-
-    return Path(__file__).resolve().parents[3]
-
-
-def resolve_safe_storage_file_path(file_path: str | None) -> Path | None:
-    """
-    Mengubah file_path dari database menjadi path file lokal yang aman.
-
-    Ketentuan keamanan:
-    - Hanya file di dalam backend/storage/ yang boleh diakses.
-    - Tidak menerima path langsung dari request user.
-    - Mencegah path traversal seperti ../.
-    - Jika file_path metadata_import tidak mengarah ke storage lokal, return None.
-    """
-
-    if not file_path:
-        return None
-
-    backend_dir = get_backend_directory()
-    storage_dir = (backend_dir / "storage").resolve()
-
-    candidate_path = Path(file_path)
-
-    if candidate_path.is_absolute():
-        resolved_path = candidate_path.resolve()
-    else:
-        resolved_path = (backend_dir / candidate_path).resolve()
-
-    try:
-        resolved_path.relative_to(storage_dir)
-    except ValueError:
-        return None
-
-    return resolved_path
 
 
 def convert_to_wib(value):
@@ -470,7 +427,7 @@ def download_document_file(
 
     Catatan:
     - File diambil dari documents.file_path.
-    - Hanya file di backend/storage/ yang boleh diakses.
+    - Hanya key storage/ yang boleh diakses (lokal atau Private Blob).
     - Dokumen metadata_import yang belum punya file fisik akan return 404 aman.
     """
 
@@ -484,6 +441,7 @@ def download_document_file(
     if not document:
         return JSONResponse(
             status_code=404,
+            headers=DOWNLOAD_HEADERS,
             content={
                 "status": "error",
                 "message": "Dokumen tidak ditemukan.",
@@ -492,23 +450,17 @@ def download_document_file(
         )
 
     try:
-        real_file_path = resolve_safe_storage_file_path(document.file_path)
-    except (OSError, ValueError, RuntimeError):
-        real_file_path = None
+        document_file = read_document(document.file_path)
+    except StorageUnavailable:
+        return JSONResponse(status_code=503, headers=DOWNLOAD_HEADERS, content={
+            "status": "error", "message": "Penyimpanan dokumen sementara tidak tersedia.",
+            "data": None,
+        })
 
-    if real_file_path is None:
+    if document_file is None:
         return JSONResponse(
             status_code=404,
-            content={
-                "status": "error",
-                "message": "File asli dokumen belum tersedia.",
-                "data": None,
-            },
-        )
-
-    if not real_file_path.exists() or not real_file_path.is_file():
-        return JSONResponse(
-            status_code=404,
+            headers=DOWNLOAD_HEADERS,
             content={
                 "status": "error",
                 "message": "File asli dokumen belum tersedia.",
@@ -517,14 +469,22 @@ def download_document_file(
         )
 
     try:
-        media_type = inspect_download_format(real_file_path)
+        media_type = inspect_download_format(document_file.path)
+        download_filename = safe_download_name(document.file_name, document_file.path, media_type)
+        response = DocumentFileResponse(
+            document_file, media_type=media_type, filename=download_filename,
+            headers=DOWNLOAD_HEADERS,
+        )
     except OSError:
-        return JSONResponse(status_code=404, content={
+        document_file.cleanup()
+        return JSONResponse(status_code=404, headers=DOWNLOAD_HEADERS, content={
             "status": "error", "message": "File asli dokumen belum tersedia.", "data": None,
         })
     except UnsupportedDocument:
+        document_file.cleanup()
         return JSONResponse(
             status_code=400,
+            headers=DOWNLOAD_HEADERS,
             content={
                 "status": "error",
                 "message": "Format file tidak didukung atau file tidak valid.",
@@ -532,14 +492,10 @@ def download_document_file(
             },
         )
 
-    download_filename = safe_download_name(document.file_name, real_file_path, media_type)
-
-    return FileResponse(
-        path=str(real_file_path),
-        media_type=media_type,
-        filename=download_filename,
-        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
-    )
+    except BaseException:
+        document_file.cleanup()
+        raise
+    return response
 
 
 @router.get("/{document_id}")

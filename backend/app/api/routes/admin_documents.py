@@ -1,11 +1,12 @@
 import math
+import logging
 import re
 from datetime import datetime, timezone
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -21,6 +22,13 @@ from app.services.ai.text_preprocessor import clean_extracted_text
 from app.services.ai.embedding_service import generate_text_embedding
 from app.models.user import User
 from app.services.auth.dependencies import require_admin
+from app.services.document_storage_service import (
+    StorageUnavailable, delete_uploaded_document, normalize_storage_path,
+    prepare_upload, save_uploaded_document,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/admin/documents", tags=["Admin Documents"],
@@ -50,70 +58,6 @@ def sanitize_filename(filename: str) -> str:
     filename = re.sub(r"\s+", " ", filename)
 
     return filename or "uploaded_document.pdf"
-
-
-def get_backend_directory() -> Path:
-    """
-    Mengambil lokasi folder backend.
-
-    Posisi file:
-    backend/app/api/routes/admin_documents.py
-
-    parents[3] = backend/
-    """
-
-    return Path(__file__).resolve().parents[3]
-
-
-def get_storage_directory() -> Path:
-    """
-    Lokasi penyimpanan PDF upload admin.
-
-    Struktur:
-    backend/storage/documents/
-    """
-
-    backend_dir = get_backend_directory()
-    storage_dir = backend_dir / "storage" / "documents"
-    storage_dir.mkdir(parents=True, exist_ok=True)
-
-    return storage_dir
-
-
-def resolve_uploaded_document_file_path(file_path: str | None) -> Path | None:
-    """
-    Mengubah file_path dari database menjadi path file lokal yang aman.
-
-    Hanya file di folder:
-    backend/storage/documents/
-
-    yang boleh dihapus.
-
-    Tujuan:
-    - Mencegah penghapusan file di luar folder storage.
-    - Tidak menghapus file dataset metadata_import.
-    - Tidak menghapus folder storage.
-    """
-
-    if not file_path:
-        return None
-
-    backend_dir = get_backend_directory()
-    storage_documents_dir = (backend_dir / "storage" / "documents").resolve()
-
-    candidate_path = Path(file_path)
-
-    if candidate_path.is_absolute():
-        resolved_path = candidate_path.resolve()
-    else:
-        resolved_path = (backend_dir / candidate_path).resolve()
-
-    try:
-        resolved_path.relative_to(storage_documents_dir)
-    except ValueError:
-        return None
-
-    return resolved_path
 
 
 def build_clean_description(description: str | None) -> str:
@@ -235,23 +179,24 @@ async def upload_admin_document(
     safe_original_filename = sanitize_filename(original_filename)
     unique_filename = f"{uuid.uuid4()}_{safe_original_filename}"
 
-    storage_dir = get_storage_directory()
-    storage_path = storage_dir / unique_filename
-
     relative_file_path = f"storage/documents/{unique_filename}"
     committed = False
+    stored = False
+    staged_file = None
 
     try:
-        file_content = await file.read()
+        staged_file = prepare_upload(relative_file_path)
+        storage_path = staged_file.path
+        with storage_path.open("wb") as output:
+            while chunk := await file.read(65536):
+                output.write(chunk)
+        file_size = storage_path.stat().st_size
 
-        if not file_content:
+        if not file_size:
             raise HTTPException(
                 status_code=400,
                 detail="File PDF kosong.",
             )
-
-        storage_path.write_bytes(file_content)
-        file_size = storage_path.stat().st_size
 
         raw_text = extract_golden_pages_text(str(storage_path))
         cleaned_text = clean_extracted_text(raw_text)
@@ -347,30 +292,33 @@ async def upload_admin_document(
             },
         }
 
+        # Process first, persist the file second, commit its canonical DB key last.
+        await run_in_threadpool(save_uploaded_document, relative_file_path, storage_path)
+        stored = True
         db.commit()
         committed = True
         return response
 
-    except HTTPException:
-        if not committed:
-            db.rollback()
-
-            if storage_path.exists():
-                storage_path.unlink()
-
-        raise
-
     except Exception as error:
         if not committed:
-            db.rollback()
-
-            if storage_path.exists():
-                storage_path.unlink()
-
+            try:
+                db.rollback()
+            finally:
+                if stored:
+                    try:
+                        await run_in_threadpool(delete_uploaded_document, relative_file_path)
+                    except StorageUnavailable:
+                        logger.warning("Upload rollback file cleanup failed for %s", relative_file_path)
+        if isinstance(error, HTTPException):
+            raise
+        logger.warning("Upload failed (%s)", type(error).__name__)
         raise HTTPException(
             status_code=500,
-            detail=f"Upload document failed: {str(error)}",
-        )
+            detail="Upload document failed. Silakan coba lagi.",
+        ) from error
+    finally:
+        if staged_file is not None:
+            staged_file.cleanup()
 
 
 
@@ -500,12 +448,12 @@ def delete_admin_document(
 
     Proses:
     1. Cari dokumen berdasarkan ID.
-    2. Simpan file_path jika file berasal dari upload lokal.
+    2. Simpan key storage dokumen upload yang aman.
     3. Hapus document_embeddings.
     4. Hapus document_metadata.
     5. Hapus documents.
     6. Commit database.
-    7. Hapus file PDF lokal jika berada di backend/storage/documents/.
+    7. Hapus file lokal/Private Blob hanya dalam scope storage/documents/.
     """
 
     document = (
@@ -524,7 +472,7 @@ def delete_admin_document(
             },
         )
 
-    uploaded_file_path = resolve_uploaded_document_file_path(document.file_path)
+    uploaded_file_path = normalize_storage_path(document.file_path, uploaded_only=True)
 
     try:
         db.query(DocumentEmbedding).filter(
@@ -552,25 +500,21 @@ def delete_admin_document(
         )
 
     file_deleted = False
-    file_delete_note = "Tidak ada file lokal upload yang perlu dihapus."
+    file_delete_note = "Tidak ada file upload yang perlu dihapus."
 
     if uploaded_file_path is not None:
         try:
-            if uploaded_file_path.exists() and uploaded_file_path.is_file():
-                uploaded_file_path.unlink()
-                file_deleted = True
-                file_delete_note = "File lokal berhasil dihapus dari storage."
+            file_deleted = delete_uploaded_document(uploaded_file_path)
+            if file_deleted:
+                file_delete_note = "File berhasil dihapus dari storage."
             else:
-                file_delete_note = "File lokal tidak ditemukan, tetapi data database berhasil dihapus."
+                file_delete_note = "File tidak ditemukan, tetapi data database berhasil dihapus."
 
-        except Exception as error:
+        except StorageUnavailable:
             file_delete_note = (
-                f"Data database berhasil dihapus, tetapi file lokal gagal dihapus: {str(error)}"
+                "Data database berhasil dihapus, tetapi file gagal dihapus dari storage."
             )
-            print(
-                f"[WARNING] Dokumen ID {document_id} berhasil dihapus dari database, "
-                f"tetapi file lokal gagal dihapus: {error}"
-            )
+            logger.warning("Document %s deleted from DB; storage cleanup failed", document_id)
 
     return {
         "status": "success",
