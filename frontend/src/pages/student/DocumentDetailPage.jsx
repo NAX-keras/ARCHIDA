@@ -262,8 +262,8 @@ function DocumentDetailPage() {
   };
 
   const backButton = <button type="button" onClick={handleBack}
-    className="min-h-11 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-    ← Kembali
+    className="inline-flex items-center gap-1 rounded px-1 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900">
+    <span aria-hidden="true">‹</span> Kembali
   </button>;
 
   if (loading) {
@@ -322,20 +322,6 @@ function DocumentDetailPage() {
       <main id="main-content" tabIndex={-1} className="app-main">
         <div className="document-detail-toolbar">
           {backButton}
-          <div className="flex flex-wrap gap-2 md:hidden">
-            <button type="button" onClick={handlePreview}
-              disabled={!canPreview || previewLoading || downloading || fileUnavailable || document.isPrivate || !document.id}
-              aria-busy={previewLoading}
-              className="min-h-11 rounded-lg border border-blue-900 bg-white px-3 py-2 text-sm font-semibold text-blue-900 disabled:opacity-50">
-              {previewLoading ? "Membuka..." : "Lihat Dokumen"}
-            </button>
-            <button type="button" onClick={handleDownload}
-              disabled={downloading || previewLoading || fileUnavailable || document.isPrivate || unsupportedMpo || !document.id}
-              aria-busy={downloading}
-              className="min-h-11 rounded-lg bg-blue-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
-              {downloading ? "Mengunduh..." : "Unduh"}
-            </button>
-          </div>
         </div>
         <div className="student-detail-page">
           <section className="page-intro" aria-labelledby="student-detail-title">

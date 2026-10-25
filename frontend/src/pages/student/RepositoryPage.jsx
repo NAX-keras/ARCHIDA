@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import StudentNavbar from "../../layouts/StudentNavbar";
 import {
   downloadDocument,
@@ -11,13 +11,16 @@ const DOCUMENT_LIMIT = 25;
 
 function RepositoryPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const savedCategory = location.state?.repositoryCategory;
+  const savedOffset = location.state?.repositoryOffset ?? 0;
 
   const [categories, setCategories] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [selectedCategory, setSelectedCategory] = useState(savedCategory ?? null);
 
   const [documents, setDocuments] = useState([]);
   const [totalDocuments, setTotalDocuments] = useState(0);
-  const [offset, setOffset] = useState(0);
+  const [offset, setOffset] = useState(savedOffset);
 
   const [categoryLoading, setCategoryLoading] = useState(true);
   const [documentLoading, setDocumentLoading] = useState(false);
@@ -79,6 +82,9 @@ function RepositoryPage() {
 
   useEffect(() => {
     loadCategorySummary();
+    if (savedCategory?.category_id != null) {
+      loadDocumentsByCategory(savedCategory, savedOffset);
+    }
   }, []);
 
   const handleCategoryClick = (category) => {
@@ -126,6 +132,11 @@ function RepositoryPage() {
   const handleDetailClick = (document) => {
     const documentId = document.document_id ?? document.id;
 
+    // Keep the selected category/page on this history entry before opening detail.
+    navigate(location.pathname + location.search, {
+      replace: true,
+      state: { ...location.state, repositoryCategory: selectedCategory, repositoryOffset: offset },
+    });
     navigate(`/documents/${documentId}`, {
       state: {
         document,
@@ -374,7 +385,7 @@ function RepositoryPage() {
 
             {!documentLoading && !errorMessage && documents.length > 0 && (
               <>
-                <div className="table-scroll" tabIndex={0} role="region" aria-label="Daftar dokumen, geser untuk melihat semua kolom">
+                <div className="table-scroll category-document-list" tabIndex={0} role="region" aria-label="Daftar dokumen kategori">
                   <table className="w-full border-collapse text-left text-sm">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">

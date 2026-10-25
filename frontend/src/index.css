@@ -356,9 +356,28 @@ a, button { transition: background-color .15s ease, border-color .15s ease, colo
 .student-detail-page .student-reader-canvas { background: #e5ecf2; }
 .student-detail-page .student-reader-status { min-height: 260px; }
 
-/* Keep document navigation reachable above long metadata and PDF previews. */
-.document-detail-toolbar { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; padding: 8px 0; background: var(--paper); }
-.document-preview-section { scroll-margin-top: 128px; }
+/* Desktop back navigation; mobile keeps the controls in the preview section. */
+.document-detail-toolbar { display: none; }
+@media (min-width: 768px) {
+  .document-detail-toolbar { display: block; margin-bottom: 12px; }
+}
+.document-preview-section { scroll-margin-top: 16px; }
+
+/* Reuse the same category rows and handlers as cards on narrow screens. */
+@media (max-width: 767px) {
+  .category-document-list { overflow: visible; border: 0; background: transparent; }
+  .category-document-list table { display: block; min-width: 0; width: 100%; }
+  .category-document-list thead { display: none; }
+  .category-document-list tbody { display: grid; gap: 12px; }
+  .category-document-list tbody tr { display: block; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  .category-document-list tbody tr:last-child { border-bottom: 1px solid var(--line); }
+  .category-document-list td { display: block; min-width: 0; padding: 5px 0; white-space: normal; }
+  .category-document-list td p { max-width: none; overflow-wrap: anywhere; }
+  .category-document-list td:first-child::before { content: "No. "; }
+  .category-document-list td:nth-child(3)::before { content: "Tahun: "; }
+  .category-document-list td:last-child > div { flex-wrap: wrap; white-space: normal; }
+  .category-document-list td button { min-height: 44px; }
+}
 
 @media (min-width: 1024px) and (max-width: 1279px) {
   :root { --sidebar-width: 224px; }
