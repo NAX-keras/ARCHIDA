@@ -2,6 +2,7 @@ import { formatStudentDescription } from "../../utils/studentPresentation.js";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import StudentNavbar from "../../layouts/StudentNavbar";
+import PdfPreview from "../../components/documents/PdfPreview";
 import {
   createDocumentPreview,
   downloadDocument,
@@ -125,11 +126,10 @@ function DocumentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
-  const supportsPdfPreview = globalThis.navigator?.pdfViewerEnabled !== false;
-  const requiresPdfViewer = document?.fileFormat === "PDF";
   const unsupportedMpo = document?.fileFormat === "MPO";
-  const canPreview = !unsupportedMpo && (!requiresPdfViewer || supportsPdfPreview);
+  const canPreview = !unsupportedMpo;
   const fileRequest = useRef(null);
+  const previewSection = useRef(null);
   const [fileUnavailable, setFileUnavailable] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -138,6 +138,12 @@ function DocumentDetailPage() {
   const [previewRenderError, setPreviewRenderError] = useState("");
   const [actionMessage, setActionMessage] = useState("");
   const [previewErrorMessage, setPreviewErrorMessage] = useState("");
+
+  useEffect(() => {
+    if (previewUrl && window.matchMedia("(max-width: 767px)").matches) {
+      previewSection.current?.scrollIntoView({ block: "start" });
+    }
+  }, [previewUrl]);
 
   useEffect(() => {
     let isMounted = true;
@@ -251,8 +257,14 @@ function DocumentDetailPage() {
   const handlePreview = () => handleFileAction(true);
 
   const handleBack = () => {
-    navigate(-1);
+    if (window.history.state?.idx > 0) navigate(-1);
+    else navigate(location.state?.fromSearch ? "/search" : "/repository", { replace: true });
   };
+
+  const backButton = <button type="button" onClick={handleBack}
+    className="min-h-11 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+    ← Kembali
+  </button>;
 
   if (loading) {
     return (
@@ -260,6 +272,7 @@ function DocumentDetailPage() {
         <StudentNavbar />
 
         <main id="main-content" tabIndex={-1} className="app-main">
+          <div className="document-detail-toolbar">{backButton}</div>
           <section className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
             <h1 className="text-2xl font-bold text-slate-800">
               Memuat Detail Dokumen
@@ -280,6 +293,7 @@ function DocumentDetailPage() {
         <StudentNavbar />
 
         <main id="main-content" tabIndex={-1} className="app-main">
+          <div className="document-detail-toolbar">{backButton}</div>
           <section className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
             <h1 className="text-2xl font-bold text-slate-800">
               Dokumen Tidak Ditemukan
@@ -306,6 +320,23 @@ function DocumentDetailPage() {
     <div className="app-shell student-shell">
       <StudentNavbar />
       <main id="main-content" tabIndex={-1} className="app-main">
+        <div className="document-detail-toolbar">
+          {backButton}
+          <div className="flex flex-wrap gap-2 md:hidden">
+            <button type="button" onClick={handlePreview}
+              disabled={!canPreview || previewLoading || downloading || fileUnavailable || document.isPrivate || !document.id}
+              aria-busy={previewLoading}
+              className="min-h-11 rounded-lg border border-blue-900 bg-white px-3 py-2 text-sm font-semibold text-blue-900 disabled:opacity-50">
+              {previewLoading ? "Membuka..." : "Lihat Dokumen"}
+            </button>
+            <button type="button" onClick={handleDownload}
+              disabled={downloading || previewLoading || fileUnavailable || document.isPrivate || unsupportedMpo || !document.id}
+              aria-busy={downloading}
+              className="min-h-11 rounded-lg bg-blue-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+              {downloading ? "Mengunduh..." : "Unduh"}
+            </button>
+          </div>
+        </div>
         <div className="student-detail-page">
           <section className="page-intro" aria-labelledby="student-detail-title">
             <h1 id="student-detail-title" className="text-2xl font-bold text-slate-800">Detail Dokumen Arsip</h1>
@@ -351,7 +382,7 @@ function DocumentDetailPage() {
             </p>
           </section>
 
-          <section className="student-reader mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-labelledby="pdf-preview-title">
+          <section ref={previewSection} className="document-preview-section student-reader mt-5 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-labelledby="pdf-preview-title">
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
               <div>
                 <h3 id="pdf-preview-title" className="text-base font-semibold text-slate-800">Pratinjau Dokumen</h3>
@@ -366,10 +397,6 @@ function DocumentDetailPage() {
               {unsupportedMpo ? (
                 <div role="status" className="student-reader-status rounded-lg border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-700">
                   Format MPO belum didukung untuk pratinjau maupun unduhan.
-                </div>
-              ) : !canPreview ? (
-                <div role="status" className="student-reader-status rounded-lg border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-700">
-                  Browser ini tidak mendukung pratinjau PDF. Gunakan tombol Unduh Dokumen untuk membuka PDF di perangkat Anda.
                 </div>
               ) : document.isPrivate ? (
                 <div role="status" className="student-reader-status flex items-center justify-center rounded-lg border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-600">
@@ -399,7 +426,7 @@ function DocumentDetailPage() {
                       }} />
                   </div>
                 ) : (
-                  <iframe src={previewUrl} title={`Preview ${document.title}`}
+                  <PdfPreview key={previewUrl} url={previewUrl} title={`Preview ${document.title}`}
                     className="h-[65vh] min-h-[360px] w-full rounded-lg border border-slate-300 bg-white sm:h-[72vh] lg:h-[75vh]" />
                 )
               ) : previewErrorMessage ? (

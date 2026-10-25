@@ -356,6 +356,10 @@ a, button { transition: background-color .15s ease, border-color .15s ease, colo
 .student-detail-page .student-reader-canvas { background: #e5ecf2; }
 .student-detail-page .student-reader-status { min-height: 260px; }
 
+/* Keep document navigation reachable above long metadata and PDF previews. */
+.document-detail-toolbar { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; padding: 8px 0; background: var(--paper); }
+.document-preview-section { scroll-margin-top: 128px; }
+
 @media (min-width: 1024px) and (max-width: 1279px) {
   :root { --sidebar-width: 224px; }
   .app-main { padding: 28px 24px 44px; }

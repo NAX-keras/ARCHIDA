@@ -2,6 +2,7 @@ import { formatStudentDescription } from "../../utils/studentPresentation.js";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import AdminNavbar from "../../layouts/AdminNavbar";
+import PdfPreview from "../../components/documents/PdfPreview";
 import { createDocumentPreview, downloadDocument, getDocumentById } from "../../services/api";
 
 function formatFileSize(size) {
@@ -98,10 +99,8 @@ function AdminDocumentDetailPage() {
   const [document, setDocument] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
-  const supportsPdfPreview = globalThis.navigator?.pdfViewerEnabled !== false;
-  const requiresPdfViewer = /pdf/i.test(document?.file_type || "") || /\.pdf$/i.test(document?.file_name || "");
-  const canPreview = !requiresPdfViewer || supportsPdfPreview;
   const fileRequest = useRef(null);
+  const previewSection = useRef(null);
   const [fileUnavailable, setFileUnavailable] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -110,6 +109,12 @@ function AdminDocumentDetailPage() {
   const [previewRenderError, setPreviewRenderError] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [downloadErrorMessage, setDownloadErrorMessage] = useState("");
+
+  useEffect(() => {
+    if (previewUrl && window.matchMedia("(max-width: 767px)").matches) {
+      previewSection.current?.scrollIntoView({ block: "start" });
+    }
+  }, [previewUrl]);
 
   useEffect(() => {
     let isMounted = true;
@@ -188,7 +193,6 @@ function AdminDocumentDetailPage() {
 
   const handleFileAction = async (preview) => {
     const request = fileRequest.current;
-    if (preview && !canPreview) return;
     if (!document?.id || fileUnavailable || request.pending) return;
     request.pending = true;
     const { signal } = request.controller;
@@ -230,12 +234,18 @@ function AdminDocumentDetailPage() {
   const handleDownload = () => handleFileAction(false);
   const handlePreview = () => handleFileAction(true);
 
+  const backButton = <button type="button" onClick={handleBack}
+    className="min-h-11 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+    ← Kembali
+  </button>;
+
   if (loading) {
     return (
       <div className="app-shell admin-shell">
         <AdminNavbar />
 
         <main id="main-content" tabIndex={-1} className="app-main">
+          <div className="document-detail-toolbar">{backButton}</div>
           <section className="rounded-xl border border-slate-200 bg-white p-8 text-center shadow-sm">
             <h1 className="text-2xl font-bold text-slate-800">
               Memuat Detail Dokumen Admin
@@ -256,6 +266,7 @@ function AdminDocumentDetailPage() {
         <AdminNavbar />
 
         <main id="main-content" tabIndex={-1} className="app-main">
+          <div className="document-detail-toolbar">{backButton}</div>
           <section className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
             <h1 className="text-2xl font-bold text-slate-800">
               Dokumen Admin Tidak Ditemukan
@@ -283,14 +294,29 @@ function AdminDocumentDetailPage() {
     <div className="app-shell admin-shell">
       <AdminNavbar />
       <main id="main-content" tabIndex={-1} className="app-main">
+        <div className="document-detail-toolbar">
+          {backButton}
+          <div className="flex flex-wrap gap-2 md:hidden">
+            <button type="button" onClick={handlePreview}
+              disabled={downloading || previewLoading || fileUnavailable || !document.id}
+              aria-busy={previewLoading}
+              className="min-h-11 rounded-lg border border-blue-900 bg-white px-3 py-2 text-sm font-semibold text-blue-900 disabled:opacity-50">
+              {previewLoading ? "Membuka..." : "Lihat Dokumen"}
+            </button>
+            <button type="button" onClick={handleDownload}
+              disabled={downloading || previewLoading || fileUnavailable || !document.id}
+              aria-busy={downloading}
+              className="min-h-11 rounded-lg bg-blue-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+              {downloading ? "Mengunduh..." : "Unduh"}
+            </button>
+          </div>
+        </div>
         <section className="page-intro">
           <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
               <h1 className="text-2xl font-bold text-slate-800">Detail Dokumen Admin</h1>
               <p className="mt-2 text-sm text-slate-500">Informasi lengkap dan berkas dokumen arsip.</p>
             </div>
-            <button type="button" onClick={handleBack}
-              className="rounded-lg border border-slate-300 bg-white px-5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Kembali</button>
           </div>
           <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
             <h2 className="max-w-4xl text-xl font-semibold leading-8 text-slate-800">{document.title}</h2>
@@ -312,7 +338,7 @@ function AdminDocumentDetailPage() {
             <InfoItem label="Dibuat" value={formatDateTime(document.created_at)} />
             <InfoItem label="Diperbarui" value={formatDateTime(document.updated_at)} />
           </dl>
-          <section className="file-section" aria-labelledby="file-section-title">
+          <section ref={previewSection} className="document-preview-section file-section" aria-labelledby="file-section-title">
             <h2 id="file-section-title" className="text-base font-semibold text-slate-800">Informasi Berkas</h2>
             <p className="mt-1 text-sm text-slate-500">Buka pratinjau atau unduh berkas PDF, JPEG, atau PNG jika tersedia. Jika pratinjau tidak tampil di browser Anda, gunakan Unduh.</p>
             <div className="file-row">
@@ -321,7 +347,7 @@ function AdminDocumentDetailPage() {
                 <p className="mt-1 text-xs text-slate-500">{document.file_type} · {formatFileSize(document.file_size)}</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={handlePreview} disabled={!canPreview || downloading || previewLoading || fileUnavailable || !document.id} aria-busy={previewLoading}
+                <button type="button" onClick={handlePreview} disabled={downloading || previewLoading || fileUnavailable || !document.id} aria-busy={previewLoading}
                   className="rounded-lg border border-blue-900 px-5 py-2 text-sm font-semibold text-blue-900 hover:bg-blue-50 disabled:opacity-60">
                   {previewLoading ? "Membuka..." : "Lihat Dokumen"}
                 </button>
@@ -331,7 +357,6 @@ function AdminDocumentDetailPage() {
               </button>
               </div>
             </div>
-            {(!canPreview || (previewMimeType === "application/pdf" && !supportsPdfPreview)) && <p role="status" className="mt-4 text-sm text-slate-600">Browser ini tidak mendukung pratinjau PDF. Gunakan tombol Unduh untuk membuka PDF di perangkat Anda.</p>}
             {previewLoading && <p role="status" className="mt-4 text-sm text-slate-600">Membuka pratinjau dokumen...</p>}
             {imageLoading && previewUrl && <p role="status" className="mt-4 text-sm text-slate-600">Menampilkan gambar...</p>}
             {previewRenderError && <p role="alert" className="mt-4 text-sm text-amber-800">{previewRenderError}</p>}
@@ -350,7 +375,7 @@ function AdminDocumentDetailPage() {
                   }} />
               </div>
             )}
-            {previewUrl && previewMimeType === "application/pdf" && supportsPdfPreview && <iframe src={previewUrl} title={`Preview ${document.title}`} className="mt-4 h-[75vh] min-h-[360px] w-full rounded-lg border border-slate-200 md:min-h-[650px]" />}
+            {previewUrl && previewMimeType === "application/pdf" && <PdfPreview key={previewUrl} url={previewUrl} title={`Preview ${document.title}`} className="mt-4 h-[75vh] min-h-[360px] w-full rounded-lg border border-slate-200 md:min-h-[650px]" />}
             {downloadErrorMessage && (
               <p role="alert" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{downloadErrorMessage}</p>
             )}
